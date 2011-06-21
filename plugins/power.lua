@@ -3,15 +3,19 @@ local streams = require 'lem.streams'
 local format  = string.format
 
 local function get_power(cont)
-	local conn = assert(streams.tcp_connect('space.labitat.dk', 8080))
+	local conn, err = streams.tcp_connect('space.labitat.dk', 8080)
+	if not conn then return cont(err) end
 
-	assert(conn:write('GET /last HTTP/1.1\r\nHost: space.labitat.dk\r\nConnection: close\r\n\r\n'))
+	local ok, err = conn:write('GET /last HTTP/1.1\r\nHost: space.labitat.dk\r\nConnection: close\r\n\r\n')
+	if not ok then return cont(err) end
 
-	local res = assert(conn:read('*a'))
-	--print(res)
+	local res, err = conn:read('*a')
+	if not res then return cont(err) end
 
 	local ms = res:match('\r\n\r\n%[%d+,(%d+)%]')
-	return cont(3600000 / tonumber(ms))
+	if not ms then cont('received unexpected answer from server') end
+
+	return cont(format('%dW', 3600000 / tonumber(ms)))
 end
 
 PRIVMSG(function(msg)
@@ -19,14 +23,14 @@ PRIVMSG(function(msg)
 	if not msg[2]:match('[Ss][Tt][Rr]..?[Mm]') then return end
 
 	if msg[1] == config.nick then
-		return utils.spawn(get_power, function(watt)
-			send('PRIVMSG %s :%dW\r\n', msg.nick, watt)
+		return utils.spawn(get_power, function(reply)
+			send('PRIVMSG %s :%s\r\n', msg.nick, reply)
 		end)
 	end
 
 	if msg[2]:match(format('^%s[:, ]', config.nick)) then
-		return utils.spawn(get_power, function(watt)
-			send('PRIVMSG %s :%s: %dW\r\n', msg[1], msg.nick, watt)
+		return utils.spawn(get_power, function(reply)
+			send('PRIVMSG %s :%s: %s\r\n', msg[1], msg.nick, reply)
 		end)
 	end
 end)
