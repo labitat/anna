@@ -5,7 +5,9 @@ require 'lem.http'
 local format, tonumber = string.format, tonumber
 
 ANSWER(function(msg)
-	if not msg:match('[Ss][Tt][Rr]..?[Mm]') then return end
+	if not (msg:match('[Ss][Tt][Rr]..?[Mm]') or
+	        msg:match('[Ee][Ff][Ff][Ee][Kk][Tt]') or
+	        msg:match('[Pp][Oo][Ww][Ee][Rr]')) then return end
 
 	local iconn, oconn = streams.tcp_connect('space.labitat.dk', 8080)
 	if not iconn then return oconn end
