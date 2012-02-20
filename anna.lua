@@ -19,6 +19,7 @@
 
 local utils    = require 'lem.utils'
 local streams  = require 'lem.streams'
+local queue    = require 'lem.streams.queue'
 local ssl      = require 'lem.ssl'
 local ircparse = require 'ircparse'
 
@@ -28,19 +29,17 @@ config = {
 	server = 'labitat.dk',
 	port = 6697,
 	channels = { '#bottest' },
-	--channels = { '#labitat' },
+	--channels = { '#labitat', '#bottest' },
 }
 
 local context = assert(ssl.newcontext())
-local conn = assert(context:connect(config.server, config.port))
 
-local mainloop
 do
+	local iconn, oconn = assert(context:connect(config.server, config.port))
 	local actions = {}
 
-	for _, cmd in ipairs{
-			'PING', 'KICK', 'PRIVMSG'} do
-		_G[cmd] = function(f)
+	for _, cmd in ipairs{'PING', 'KICK', 'PRIVMSG'} do
+		_ENV[cmd] = function(f)
 			local list = actions[cmd]
 			if list == nil then
 				actions[cmd] = { f }
@@ -51,69 +50,58 @@ do
 	end
 
 	local format = string.format
-	local queue, first, last = {}, 0, 0
 
-	function send(fmt, ...)
-		last = last + 1
-		queue[last] = format(fmt, ...)
+	oconn = queue.wrap(oconn)
 
-		if last == 1 and conn:busy() then
-			conn:interrupt()
-		end
+	function send(...)
+		return oconn:write(format(...))
 	end
 
-	function mainloop()
+	utils.spawn(function()
 		while true do
-			while first < last do
-				first = first + 1
-				assert(conn:write(queue[first]))
-				queue[first] = nil
-			end
-
-			first, last = 0, 0
-
-			local line, err = conn:read('*l')
-			if line then
-				io.write(line)
-
-				local msg, err = ircparse(line)
-				if not msg then
-					print(format('Error parsing %q', line))
-				else
-					local list = actions[msg.command]
-					if list then
-						for i = 1, #list do
-							list[i](msg)
-						end
-					end
-				end
-			elseif err ~= 'interrupted' then
+			local line, err = iconn:read('*l')
+			if not line then
 				print(err)
 				break
 			end
+
+			print(line)
+
+			local msg, err = ircparse(line)
+			if not msg then
+				print(format("Error parsing '%s'", line))
+			else
+				local list = actions[msg.command]
+				if list then
+					for i = 1, #list do
+						list[i](msg)
+					end
+				end
+			end
 		end
-	end
+	end)
 end
 
 for plugin in assert(io.popen('dir -1 plugins')):lines() do
+	io.write('Loading ', plugin, '...')
+	io.flush()
 	assert(loadfile('plugins/'..plugin))()
+	print('done')
 end
 
 send('NICK %s\r\n', config.nick)
 send('USER %s 0 * :%s\r\n', config.nick, config.description)
+utils.sleeper():sleep(2)
 for _, chan in ipairs(config.channels) do
+	print(("Trying to join %s"):format(chan))
 	send('JOIN %s\r\n', chan)
 end
 
-utils.spawn(function()
-	local stdin = streams.stdin
+local stdin = streams.stdin
 
-	while true do
-		local line = assert(stdin:read('*l'))
-		send('PRIVMSG %s :%s\r\n', config.channels[1], line:sub(1, -2))
-	end
-end)
-
-mainloop()
+while true do
+	local line = assert(stdin:read('*l'))
+	send('PRIVMSG %s :%s\r\n', config.channels[1], line)
+end
 
 -- vim: ts=2 sw=2 noet:
