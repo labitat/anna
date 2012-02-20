@@ -22,6 +22,7 @@ local streams  = require 'lem.streams'
 local queue    = require 'lem.streams.queue'
 local ssl      = require 'lem.ssl'
 local ircparse = require 'ircparse'
+local bqueue   = require 'bqueue'
 
 config = {
 	nick = 'Anna',
@@ -34,48 +35,91 @@ config = {
 
 local context = assert(ssl.newcontext())
 
+local send
 do
-	local iconn, oconn = assert(context:connect(config.server, config.port))
-	local actions = {}
+	local format = string.format
+	local match, mme = string.match, format('^%s[:, ]([^\r\n]+)', config.nick)
+	local is, os = assert(context:connect(config.server, config.port))
+	os = queue.wrap(os)
 
-	for _, cmd in ipairs{'PING', 'KICK', 'PRIVMSG'} do
-		_ENV[cmd] = function(f)
-			local list = actions[cmd]
-			if list == nil then
-				actions[cmd] = { f }
-			else
-				list[#list + 1] = f
+	function send(...)
+		return os:write(format(...))
+	end
+
+	do
+		local channels = config.channels
+		function say(...)
+			local msg = format(...)
+			for i = 1, #channels do
+				os:write(format('PRIVMSG %s :%s\r\n', channels[i], msg))
 			end
 		end
 	end
 
-	local format = string.format
-
-	oconn = queue.wrap(oconn)
-
-	function send(...)
-		return oconn:write(format(...))
+	local plugins, n = {}, 0
+	function ANSWER(handler)
+		local queue = bqueue.new()
+		n = n + 1
+		plugins[n] = queue
+		utils.spawn(function(queue)
+			while true do
+				local msg = queue:get()
+				local reply = handler(msg[1])
+				if reply then
+					local nick, chan = msg[2], msg[3]
+					if chan then
+						send('PRIVMSG %s :%s: %s\r\n', chan, nick, reply)
+					else
+						send('PRIVMSG %s :%s\r\n', nick, reply)
+					end
+				end
+			end
+		end, queue)
 	end
+
+	local function notify_listeners(msg)
+		for i = 1, n do
+			 plugins[i]:put(msg)
+		end
+	end
+
+	local actions = {
+		PING = function(msg)
+			send('PONG :%s\r\n', msg[1])
+		end,
+		KICK = function(msg)
+			send('JOIN %s\r\n', msg[1])
+		end,
+		PRIVMSG = function(msg)
+			local nick = msg.nick
+			if not nick or nick == config.nick then return end
+			if msg[1] == config.nick then
+				return notify_listeners{ msg[2], nick }
+			end
+
+			local str = match(msg[2], mme)
+			if str then
+				return notify_listeners{ str, nick, msg[1] }
+			end
+		end,
+	}
 
 	utils.spawn(function()
 		while true do
-			local line, err = iconn:read('*l')
+			local line, err = is:read('*l')
 			if not line then
 				print(err)
 				break
 			end
 
-			print(line)
-
 			local msg, err = ircparse(line)
 			if not msg then
-				print(format("Error parsing '%s'", line))
+				print(format("Error parsing '%s': %s", line, err))
 			else
-				local list = actions[msg.command]
-				if list then
-					for i = 1, #list do
-						list[i](msg)
-					end
+				print(line)
+				local handler = actions[msg.command]
+				if handler then
+					handler(msg)
 				end
 			end
 		end
@@ -97,8 +141,9 @@ for _, chan in ipairs(config.channels) do
 	send('JOIN %s\r\n', chan)
 end
 
-local stdin = streams.stdin
+say('Hello!')
 
+local stdin = streams.stdin
 while true do
 	local line = assert(stdin:read('*l'))
 	send('PRIVMSG %s :%s\r\n', config.channels[1], line)

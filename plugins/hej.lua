@@ -1,13 +1,8 @@
-PRIVMSG(function(msg)
-	if msg.nick == config.nick then return end
-
-	if msg[1] == config.nick then
-		return send('PRIVMSG %s :Hej %s\r\n', msg.nick, msg.nick)
-	end
-
-	if msg[2]:match('^[Hh][Ee][Jj] [Aa][Nn][Nn][Aa]$') or
-	   msg[2]:match('^[Hh][Ee][Jj] [Aa][Nn][Nn][Aa][ %.,]') then
-		send('PRIVMSG %s :Hej %s\r\n', msg[1], msg.nick)
+ANSWER(function(msg)
+	if msg:match('[Hh][Ee][Jj]') then
+		return 'Hej'
+	elseif msg:match('[Hh][Ee][Ll][Ll][Oo]') then
+		return 'Hello'
 	end
 end)
 
