@@ -64,9 +64,10 @@ do
 		utils.spawn(function(queue)
 			while true do
 				local msg = queue:get()
-				local reply = handler(msg[1])
+				local nick = msg[2]
+				local reply = handler(msg[1], nick)
 				if reply then
-					local nick, chan = msg[2], msg[3]
+					local chan = msg[3]
 					if chan then
 						send('PRIVMSG %s :%s: %s\r\n', chan, nick, reply)
 					else
